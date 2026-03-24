@@ -1,6 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { generateSourceKey } from '../lib/generate-source-key';
 import { CreatePipelineInput, UpdatePipelineInput } from '../types/pipeline';
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue {
+  return value as Prisma.InputJsonValue;
+}
 
 export async function createPipeline(data: CreatePipelineInput) {
   const sourceKey = generateSourceKey();
@@ -10,7 +15,7 @@ export async function createPipeline(data: CreatePipelineInput) {
       name: data.name,
       sourceKey,
       actionType: data.actionType,
-      actionConfig: data.actionConfig,
+      actionConfig: toJsonValue(data.actionConfig),
       subscribers: {
         create: data.subscribers.map((subscriber) => ({
           targetUrl: subscriber.targetUrl,
@@ -54,14 +59,18 @@ export async function updatePipeline(id: string, data: UpdatePipelineInput) {
     return null;
   }
 
+  const updateData: Prisma.PipelineUpdateInput = {
+    ...(data.name !== undefined ? { name: data.name } : {}),
+    ...(data.actionType !== undefined ? { actionType: data.actionType } : {}),
+    ...(data.actionConfig !== undefined
+      ? { actionConfig: toJsonValue(data.actionConfig) }
+      : {}),
+    ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+  };
+
   return prisma.pipeline.update({
     where: { id },
-    data: {
-      ...(data.name !== undefined && { name: data.name }),
-      ...(data.actionType !== undefined && { actionType: data.actionType }),
-      ...(data.actionConfig !== undefined && { actionConfig: data.actionConfig }),
-      ...(data.isActive !== undefined && { isActive: data.isActive }),
-    },
+    data: updateData,
     include: {
       subscribers: true,
     },
