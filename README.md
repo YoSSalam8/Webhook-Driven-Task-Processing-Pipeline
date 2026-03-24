@@ -2,7 +2,7 @@
 
 A backend service that receives webhooks, queues them for asynchronous processing, applies a configured transformation, and delivers the processed result to one or more subscriber endpoints.
 
-This project was built as a simplified event-processing pipeline inspired by webhook automation platforms. It focuses on reliability, separation of concerns, and traceability.
+This project was built as a simplified event-processing pipeline inspired by webhook automation platforms. It focuses on reliability, separation of concerns, traceability, and background job processing.
 
 ---
 
@@ -19,9 +19,12 @@ This project was built as a simplified event-processing pipeline inspired by web
 - Delivery of processed results to subscriber URLs
 - Retry logic for failed deliveries
 - Job status and delivery attempt tracking
+- Unit tests for major error paths
+- Coverage reporting
 - PostgreSQL for persistence
 - Redis + BullMQ for queue processing
 - Dockerized infrastructure
+- GitHub Actions CI pipeline
 
 ---
 
@@ -34,64 +37,103 @@ This project was built as a simplified event-processing pipeline inspired by web
 - **Prisma**
 - **Redis**
 - **BullMQ**
+- **Axios**
+- **Vitest**
 - **Docker**
-- **GitHub Actions** (to be used for CI)
+- **GitHub Actions**
 
 ---
 
 ## Architecture Overview
 
-The system is split into four main parts:
+The project uses a **layered backend architecture** combined with an **event-driven asynchronous processing model**.
 
-### 1. API Server
+### API Layer
 Responsible for:
 - managing pipelines
 - accepting incoming webhooks
 - exposing job history and status endpoints
 
-### 2. PostgreSQL Database
-Stores:
+### Database Layer
+PostgreSQL stores:
 - pipelines
 - subscribers
 - webhook events
 - jobs
 - delivery attempts
 
-### 3. Redis Queue
-Used as the broker for background job processing.
+### Queue Layer
+Redis + BullMQ are used to enqueue background jobs after webhook ingestion.
 
-### 4. Worker
-Consumes queued jobs, applies the selected processing action, delivers the result to subscribers, and records the outcome.
-
----
-
-## Data Flow
-
-1. A user creates a pipeline.
-2. The system generates a unique `sourceKey` for that pipeline.
-3. External systems send webhooks to `/webhooks/:sourceKey`.
-4. The API stores the webhook as an event and creates a job record.
-5. The job is pushed to BullMQ.
-6. The worker picks up the job asynchronously.
-7. The worker processes the payload using the configured action.
-8. The processed result is sent to all active subscribers.
-9. Delivery attempts are recorded in the database.
-10. The final job status is updated based on processing and delivery outcomes.
+### Worker Layer
+A separate worker process consumes queued jobs, processes payloads, delivers results to subscribers, and records outcomes.
 
 ---
 
-## Processing Actions
+## Project Structure
 
-### 1. `extract_fields`
+
+.
+├── src
+│   ├── config
+│   ├── controllers
+│   ├── lib
+│   ├── processors
+│   ├── queue
+│   ├── routes
+│   ├── services
+│   ├── workers
+│   ├── app.ts
+│   └── server.ts
+├── prisma
+│   ├── migrations
+│   └── schema.prisma
+├── tests
+├── .github
+│   └── workflows
+├── Dockerfile
+├── docker-compose.yml
+├── package.json
+└── README.md
+Data Flow
+A user creates a pipeline.
+The system generates a unique sourceKey for that pipeline.
+External systems send webhooks to /webhooks/:sourceKey.
+The API stores the webhook as an event and creates a job record.
+The job is pushed to BullMQ.
+The worker picks up the job asynchronously.
+The worker processes the payload using the configured action.
+The processed result is sent to all active subscribers.
+Delivery attempts are recorded in the database.
+The final job status is updated based on processing and delivery outcomes.
+Processing Actions
+1) extract_fields
+
 Extracts only the configured fields from the incoming payload.
 
 Example config:
 
-```json
 {
   "fields": ["orderId", "email", "amount"]
 }
-2. uppercase_text
+
+Example input:
+
+{
+  "orderId": "ORD-1001",
+  "email": "test@example.com",
+  "amount": 250,
+  "note": "extra field"
+}
+
+Example output:
+
+{
+  "orderId": "ORD-1001",
+  "email": "test@example.com",
+  "amount": 250
+}
+2) uppercase_text
 
 Reads the text field and converts it to uppercase.
 
@@ -106,13 +148,22 @@ Example output:
 {
   "text": "HELLO WORLD"
 }
-3. add_metadata
+3) add_metadata
 
-Wraps the original payload and appends processing metadata such as:
+Wraps the original payload and appends processing metadata.
 
-pipeline ID
-event ID
-processed timestamp
+Example output:
+
+{
+  "original": {
+    "message": "hello"
+  },
+  "metadata": {
+    "pipelineId": "pipeline-id",
+    "eventId": "event-id",
+    "processedAt": "2026-03-23T23:00:00.000Z"
+  }
+}
 Database Schema
 
 Main entities:
@@ -122,6 +173,19 @@ Subscriber: target URL that receives processed data
 WebhookEvent: raw incoming webhook payload
 Job: background processing unit for each webhook event
 DeliveryAttempt: logs each attempt to deliver results to subscribers
+Indexing
+
+To improve performance and scalability, indexes were added on common query paths such as:
+
+pipelineId
+eventId
+status
+jobId
+subscriberId
+timestamp fields used in history lookups
+
+This helps the system remain efficient as the number of pipelines, jobs, and delivery attempts grows.
+
 API Endpoints
 Pipelines
 Create pipeline
@@ -247,6 +311,36 @@ DATABASE_URL="postgresql://app:app@localhost:5432/webhook_pipeline?schema=public
 PORT=3000
 REDIS_HOST=localhost
 REDIS_PORT=6379
+Testing
+
+Run all tests:
+
+npm test
+
+Run coverage:
+
+npm run test:coverage
+
+The test suite covers:
+
+controller error handling
+webhook error paths
+job retrieval error handling
+processing service behavior
+delivery failures and retry behavior
+CI
+
+GitHub Actions is configured to run the CI pipeline on push and pull requests.
+
+The workflow currently:
+
+installs dependencies
+generates the Prisma client
+runs type checks
+builds the project
+
+This ensures that the codebase remains type-safe and buildable.
+
 Docker
 
 The project includes Docker configuration for:
@@ -254,7 +348,9 @@ The project includes Docker configuration for:
 PostgreSQL
 Redis
 
-A full Compose setup for the app and worker can be added for production-style execution, but the current local workflow uses Docker for infrastructure and local Node processes for development.
+The current development workflow uses Docker for infrastructure and local Node processes for the API server and worker.
+
+A full Compose setup for running the entire application stack inside containers can be added as a production-style extension.
 
 Design Decisions
 Why asynchronous processing?
@@ -278,6 +374,10 @@ worker performs background processing
 Why log delivery attempts in the database?
 
 This improves traceability, observability, and debugging. It also makes job history much more useful.
+
+Why add indexes?
+
+Indexes improve performance on the most common read paths, especially for job history, delivery tracking, and pipeline-related lookups.
 
 Trade-offs and Future Improvements
 
@@ -306,7 +406,13 @@ processed result
 final job status
 delivery attempts
 
-This demonstrates the asynchronous architecture clearly.
+A strong example is a partially_failed job where:
+
+processing succeeds
+one subscriber succeeds
+one subscriber fails
+
+This demonstrates both the happy path and failure handling.
 
 Author
 
@@ -316,4 +422,5 @@ API design
 background processing
 reliability
 queue-based systems
+testing and validation
 TypeScript backend development
