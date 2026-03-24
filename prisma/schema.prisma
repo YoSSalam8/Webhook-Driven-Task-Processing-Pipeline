@@ -20,6 +20,9 @@ model Pipeline {
   subscribers  Subscriber[]
   events       WebhookEvent[]
   jobs         Job[]
+
+  @@index([isActive])
+  @@index([createdAt])
 }
 
 model Subscriber {
@@ -31,6 +34,9 @@ model Subscriber {
 
   pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   attempts   DeliveryAttempt[]
+
+  @@index([pipelineId])
+  @@index([isActive])
 }
 
 model WebhookEvent {
@@ -44,6 +50,10 @@ model WebhookEvent {
 
   pipeline    Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   jobs        Job[]
+
+  @@index([pipelineId])
+  @@index([status])
+  @@index([receivedAt])
 }
 
 model Job {
@@ -60,6 +70,11 @@ model Job {
   event       WebhookEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
   pipeline    Pipeline     @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   deliveries  DeliveryAttempt[]
+
+  @@index([eventId])
+  @@index([pipelineId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model DeliveryAttempt {
@@ -75,4 +90,9 @@ model DeliveryAttempt {
 
   job            Job        @relation(fields: [jobId], references: [id], onDelete: Cascade)
   subscriber     Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([subscriberId])
+  @@index([status])
+  @@index([attemptedAt])
 }
